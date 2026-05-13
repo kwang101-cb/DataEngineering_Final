@@ -1,0 +1,8 @@
+duckdb
+matplotlib
+missingno
+numpy
+pandas
+pyreadstat
+seaborn
+sqlalchemy
