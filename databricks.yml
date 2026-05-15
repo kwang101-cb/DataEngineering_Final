@@ -1,0 +1,20 @@
+bundle:
+  name: brfss-analytics
+
+resources:
+  apps:
+    brfss_analytics_app:
+      name: brfss-analytics
+      description: |
+        Interactive analytics dashboard for the BRFSS 2024 chronic disease project.
+        Reads from data_engineering.gold via the SQL warehouse bound in app.yaml
+        and renders weighted prevalence, geographic, demographic, behavioral risk,
+        and care-gap views.
+      source_code_path: ./app
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-670721c9-ce87.cloud.databricks.com

@@ -1,0 +1,21 @@
+command:
+  - streamlit
+  - run
+  - app.py
+env:
+  - name: STREAMLIT_SERVER_HEADLESS
+    value: "true"
+  - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+    value: "false"
+  # Warehouse ID is set as a literal env var so the app always sees it,
+  # regardless of how `valueFrom` resolution behaves across CLI versions.
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "8a0ddda80f05d456"
+resources:
+  # Resource binding is kept so the app's service principal gets CAN_USE
+  # on the warehouse automatically at deploy time.
+  - name: warehouse
+    description: SQL warehouse the dashboard queries for gold-layer data
+    sql_warehouse:
+      id: 8a0ddda80f05d456
+      permission: CAN_USE

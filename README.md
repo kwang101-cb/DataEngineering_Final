@@ -2,16 +2,17 @@
 
 # BRFSS 2024 — Behavioral Risk & Chronic Disease Analytics
 
-**A medallion-architecture data pipeline that transforms the CDC's Behavioral Risk Factor Surveillance System into analysis-ready datasets for chronic disease prevention research.**
+**A medallion-architecture data pipeline that transforms the CDC's Behavioral Risk Factor Surveillance System into analysis-ready datasets, plus a Databricks App that surfaces them as interactive dashboards.**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Databricks](https://img.shields.io/badge/Databricks-Workspace-FF3621?style=flat-square&logo=databricks&logoColor=white)](https://www.databricks.com/)
 [![Delta Lake](https://img.shields.io/badge/Delta_Lake-Bronze%2FSilver%2FGold-00ADD8?style=flat-square&logo=databricks&logoColor=white)](https://delta.io/)
 [![PySpark](https://img.shields.io/badge/PySpark-3.5-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org/)
 [![SQL](https://img.shields.io/badge/SQL-ANSI-4479A1?style=flat-square&logo=postgresql&logoColor=white)](#)
+[![Streamlit](https://img.shields.io/badge/Streamlit-Databricks_App-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![Plotly](https://img.shields.io/badge/Plotly-Visualization-3F4F75?style=flat-square&logo=plotly&logoColor=white)](https://plotly.com/python/)
+[![DAB](https://img.shields.io/badge/Databricks-Asset_Bundle-FF3621?style=flat-square&logo=databricks&logoColor=white)](https://docs.databricks.com/aws/en/dev-tools/bundles/)
 [![pandas](https://img.shields.io/badge/pandas-2.x-150458?style=flat-square&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
-[![NumPy](https://img.shields.io/badge/NumPy-013243?style=flat-square&logo=numpy&logoColor=white)](https://numpy.org/)
-[![Tableau](https://img.shields.io/badge/Tableau-Dashboards-E97627?style=flat-square&logo=tableau&logoColor=white)](https://www.tableau.com/)
 [![Status](https://img.shields.io/badge/status-in_development-yellow?style=flat-square)](#)
 [![Course](https://img.shields.io/badge/UChicago-ADSP_31012-800000?style=flat-square)](#)
 
@@ -26,8 +27,15 @@
 - [Data Sources](#data-sources)
 - [Architecture](#architecture)
 - [Repository Structure](#repository-structure)
+  - [Notebooks](#notebooks)
+  - [Streamlit App](#streamlit-app)
+  - [Databricks Asset Bundle](#databricks-asset-bundle)
 - [Pipeline Walkthrough](#pipeline-walkthrough)
+- [The Dashboard App](#the-dashboard-app)
 - [Quickstart](#quickstart)
+  - [Run the data pipeline](#run-the-data-pipeline)
+  - [Deploy the app](#deploy-the-app)
+  - [Local development](#local-development)
 - [Tech Stack](#tech-stack)
 - [Deliverables & Roadmap](#deliverables--roadmap)
 
@@ -55,7 +63,7 @@ To address these, the project produces three downstream deliverables:
 | 2 | State-level **benchmarking dashboard** | State & county health departments |
 | 3 | Preventive **care gap report** | CMS, federal policy analysts |
 
-All three are surfaced through interactive Tableau dashboards.
+All three are surfaced through the interactive Streamlit dashboard described below.
 
 ## Data Sources
 
@@ -65,25 +73,25 @@ All three are surfaced through interactive Tableau dashboards.
 | **SVI 2022** | [CDC/ATSDR Social Vulnerability Index](https://www.atsdr.cdc.gov/place-health/php/svi/index.html) | One row per US county | 3,144 | 158 |
 | **Medicaid Expansion** | [KFF State Health Facts](https://www.kff.org/) | One row per state | 54 | 6 |
 
-BRFSS covers health behaviors, chronic conditions, preventive care, and demographics across all 50 states, DC, and US territories. SVI and Medicaid expansion status are joined as state-level context for cross-jurisdictional benchmarking.
-
 ## Architecture
 
-The pipeline follows a **medallion architecture** in Databricks Unity Catalog. Each layer is progressively cleaner, more typed, and more analytically useful than the layer below.
+The pipeline follows a **medallion architecture** in Databricks Unity Catalog. Each layer is progressively cleaner, more typed, and more analytically useful than the layer below. The gold layer is consumed by a Streamlit-based Databricks App.
 
 ```mermaid
 flowchart LR
-    A[Raw Sources<br/>XPT, CSV]:::raw -->|ingest| B[Bronze<br/>raw, string-typed]:::bronze
+    A[Raw Sources<br/>XPT, CSV]:::raw -->|0_Kevin_Create_Bronze| B[Bronze<br/>raw]:::bronze
     B -->|bronze_cleanup<br/>infer + cast types| C[Bronze<br/>typed]:::bronze
-    C -->|2_Ploy_File_Cleanup_Silver<br/>recode + derive + aggregate| D[Silver<br/>analysis-ready]:::silver
+    C -->|1_Ploy_Bronze_to_Silver<br/>recode + derive + aggregate| D[Silver]:::silver
     D -->|1_Kelly_EDA<br/>impute + feature select| E[Silver<br/>model-ready]:::silver
-    E -->|clustering + benchmarking| F[Gold<br/>insights]:::gold
-    F -->|publish| G[Tableau<br/>Dashboards]:::dash
+    D -->|silver_to_gold<br/>star schema| F[Gold]:::gold
+    F -->|DBSQL warehouse| G[Streamlit App<br/>Databricks Apps]:::app
+    G --> H[End users<br/>Tableau, exports]:::dash
 
     classDef raw fill:#e5e7eb,stroke:#6b7280,color:#111
     classDef bronze fill:#92400e,stroke:#451a03,color:#fff
     classDef silver fill:#9ca3af,stroke:#374151,color:#fff
     classDef gold fill:#ca8a04,stroke:#713f12,color:#fff
+    classDef app fill:#FF3621,stroke:#7f1d1d,color:#fff
     classDef dash fill:#1f2937,stroke:#000,color:#fff
 ```
 
@@ -91,157 +99,195 @@ flowchart LR
 
 | Layer | Table | Description |
 |---|---|---|
-| Bronze | `bronze.brfss_2024` | Raw BRFSS survey records |
+| Bronze | `bronze.brfss_2024` | Raw BRFSS survey records (typed by `bronze_cleanup`) |
 | Bronze | `bronze.svi_2022_us_county` | Raw county-level SVI |
 | Bronze | `bronze.medicaid_expansion_status_raw` | Raw KFF state policy |
 | Silver | `silver.brfss_2024_transformed` | Recoded + derived BRFSS, one row per respondent |
-| Silver | `silver.svi_2022_state` | Population-weighted state-level SVI |
-| Silver | `silver.medicaid_expansion_clean` | Cleaned state expansion policy + territories |
-| Silver | `silver.brfss_2024_clean_eda` | Imputed, feature-selected, model-ready BRFSS |
+| Silver | `silver.svi_2022_state_transformed` | Population-weighted state-level SVI |
+| Silver | `silver.medicaid_expansion_clean_transformed` | Cleaned state expansion policy + territories |
+| Gold | `gold.dim_location`, `dim_svi`, `dim_medicaid`, `dim_respondent`, `dim_behavior`, `dim_chronic_condition`, `dim_healthcare_access`, `dim_preventive_care`, `dim_time` | Star-schema dimensions |
+| Gold | `gold.fact_health_response` | Fact table — one row per respondent, with seven dim FKs and survey measures |
 
 ## Repository Structure
 
 ```text
 DataEngineering_Final/
-├── 1_EDA_Initial_Clean.ipynb       # Local export — EDA + model-prep
-├── 2_Ploy_File_Cleanup.ipynb       # Local export — bronze→silver transforms (Colab original)
-├── raw_brfss_2024.parquet          # Serialized raw BRFSS (input to bronze ingest)
-├── requirements.txt                # Python dependencies
-└── README.md                       # You are here
+├── README.md
+├── requirements.txt                   # Notebook deps for local exploration
+├── raw_brfss_2024.parquet             # Pre-ingest snapshot of BRFSS XPT
+├── databricks.yml                     # DAB — declares the app + bound warehouse
+├── notebooks/                         # Mirrors /Data_Engineering_Notebooks/ in the workspace
+│   ├── 0_Kevin_Create_Bronze.ipynb
+│   ├── bronze_cleanup.ipynb
+│   ├── 1_Ploy_Bronze_to_Silver.ipynb
+│   ├── 1_Kelly_EDA.ipynb
+│   └── silver_to_gold.ipynb
+└── app/                               # Databricks App source
+    ├── app.yaml                       # Apps runtime command + env
+    ├── app.py                         # Streamlit dashboard entry point
+    ├── requirements.txt               # App-specific Python deps
+    └── .streamlit/config.toml         # Databricks-branded theme
 ```
 
-The runnable pipeline lives in the Databricks workspace under `/Data_Engineering_Notebooks/`:
+### Notebooks
 
-| Notebook | Role | Workspace ID |
+The `notebooks/` directory is an exact mirror of `/Data_Engineering_Notebooks/` in the Databricks workspace. Run them in workspace; the local copies exist for version control and review.
+
+| File | Workspace path | Role |
 |---|---|---|
-| [`bronze_cleanup`](https://dbc-670721c9-ce87.cloud.databricks.com/editor/notebooks/3264311965298916?o=7474658763286946) | Best-effort per-column type cast for raw BRFSS bronze | `3264311965298916` |
-| [`2_Ploy_File_Cleanup_Silver`](https://dbc-670721c9-ce87.cloud.databricks.com/editor/notebooks/1475456781491710?o=7474658763286946) | Bronze → Silver: recoding, labeling, derived columns, state aggregation | `1475456781491710` |
-| [`1_Kelly_EDA`](https://dbc-670721c9-ce87.cloud.databricks.com/editor/notebooks/2061796803055964?o=7474658763286946) | EDA, weighted prevalence, geography, correlations, model-prep | `2061796803055964` |
+| `0_Kevin_Create_Bronze.ipynb` | `/Data_Engineering_Notebooks/0_Kevin_Create_Bronze` | Ingests raw sources → `bronze.*` |
+| `bronze_cleanup.ipynb` | `/Data_Engineering_Notebooks/bronze_cleanup` | Per-column type inference; overwrites `bronze.brfss_2024` |
+| `1_Ploy_Bronze_to_Silver.ipynb` | `/Data_Engineering_Notebooks/1_Ploy_Bronze_to_Silver` | Recoding, derived columns, state aggregation → silver |
+| `1_Kelly_EDA.ipynb` | `/Data_Engineering_Notebooks/1_Kelly_EDA` | Exploratory analysis + model-prep silver output |
+| `silver_to_gold.ipynb` | `/Data_Engineering_Notebooks/silver_to_gold` | Builds the star schema in `data_engineering.gold` |
+
+### Streamlit App
+
+The `app/` directory contains a Databricks App that consumes the gold tables via a bound SQL warehouse and renders five views:
+
+1. **Overview** — weighted chronic-condition prevalence, multimorbidity histogram, diabetes status breakdown.
+2. **Geographic** — choropleth map of state-level prevalence with SVI/Medicaid overlays.
+3. **Demographics** — age × sex, race/ethnicity, education, income.
+4. **Behavioral Risk** — smoking, drinking, exercise, BMI; BMI × diabetes prevalence.
+5. **Care Gaps** — preventive uptake by insurance status, cost barriers vs. condition burden, PCP access.
+
+All visualizations use Plotly with a custom Databricks-branded template (`#FF3621` accent, `#1B3139` text, off-white background). Queries are cached in Streamlit for one hour.
+
+### Databricks Asset Bundle
+
+`databricks.yml` declares one resource — the Databricks App — with a bound SQL warehouse. The warehouse ID is parameterized via the `warehouse_id` bundle variable (default: the workspace's Serverless Starter Warehouse). The `dev` target points at `https://dbc-670721c9-ce87.cloud.databricks.com`.
 
 ## Pipeline Walkthrough
 
 The pipeline is designed to run **sequentially**. Each step depends on the prior layer being clean and typed correctly.
 
-### Step 1 — Bronze Type Cleanup
+### Step 0 — Bronze Ingestion (`0_Kevin_Create_Bronze`)
 
-> Notebook: **`bronze_cleanup`**
+Ingests the raw BRFSS XPT, SVI county CSV, and KFF Medicaid CSV into the `bronze.*` tables. One-time setup.
 
-The raw BRFSS bronze table was ingested with every column typed as `string`. Most columns hold numeric content (survey codes, weights, BMI, etc.), but a handful are zero-padded date or ID strings that need to remain text. This step does a best-effort cast on a per-column basis:
+### Step 1 — Bronze Type Cleanup (`bronze_cleanup`)
+
+The raw BRFSS bronze table was ingested with every column typed as `string`. This step does a best-effort per-column cast:
 
 | Signal in the data | Inferred type |
 |---|---|
 | Contains `.` anywhere | `double` |
-| Starts with `0` then another digit (e.g. `"02"`, `"02282024"`) | `string` (preserve padding) |
+| Starts with `0` then another digit AND value ≤ 4 chars | `bigint` (zero-padded short codes) |
+| Starts with `0` then another digit AND value > 4 chars | `string` (preserves date/ID padding) |
 | All values cast cleanly to integer | `bigint` |
-| Cast-able to double but not integer | `double` |
 | Any value can't be parsed as a number | `string` (fallback) |
 
-The plan is built from a 100k-row sample, then validated against the full table — any column whose null count grows after casting is reverted to `string` before overwrite.
+Sample-based plan, full-table null-count validation, in-place overwrite.
 
-**Output:** `data_engineering.bronze.brfss_2024`, same shape, typed appropriately.
+### Step 2 — Bronze → Silver Transformation (`1_Ploy_Bronze_to_Silver`)
 
----
+Transforms the three raw bronze sources into clean, analysis-ready silver tables (recode skip codes → NULL, map numeric codes to labels, split `DIABETE4` into `diabetes` + `diabetes_status`, derive 8 columns, divide `bmi_raw` to actual BMI units, FIPS → state lookup). Outputs three `silver.*_transformed` tables.
 
-### Step 2 — Bronze → Silver Transformation
+### Step 3 — EDA & Model Preparation (`1_Kelly_EDA`)
 
-> Notebook: **`2_Ploy_File_Cleanup_Silver`**
+Nine-section exploratory analysis (data overview, missing-value audit, weighted prevalence, demographics, outcome prevalence, behavioral risk, healthcare access, geographic profiles, correlations) followed by feature selection and imputation. Output: `silver.brfss_2024_clean_eda`.
 
-Transforms the three raw bronze sources into clean, analysis-ready silver tables:
+### Step 4 — Silver → Gold Star Schema (`silver_to_gold`)
 
-| Source | Transformation | Output |
-|---|---|---|
-| BRFSS | Subset to 62 analytic columns, recode survey skip codes (`7`, `9`, `77`, ...) to `NULL`, map numeric codes to readable labels (sex, age band, race, income, etc.), split `DIABETE4` into `diabetes` + `diabetes_status`, add 8 derived columns (`physhlth_bin`, `bmi_category_clean`, `ever_smoker`, `log_weight`, `condition_count`, `age_decade`, `quarter`), apply FIPS → state lookup | `silver.brfss_2024_transformed` (457,670 × 73) |
-| SVI | Replace `-999` with `NULL`; aggregate county → state using population-weighted averages; rename to readable identifiers | `silver.svi_2022_state` (51 × 16) |
-| Medicaid | Regex-extract expansion year from messy date strings; drop the "United States" aggregate; append PR/GU/VI as `Not Applicable` | `silver.medicaid_expansion_clean` (54 × 3) |
+Builds the dimensional model in `data_engineering.gold` per the MySQL DDL. Generates surrogate keys via `row_number()` (materialized to a temp table for serverless), joins five per-respondent dimensions to a single shared key, then assembles the fact table. Declares informational `PRIMARY KEY` / `FOREIGN KEY` constraints for downstream query-planner use.
 
-**Cross-source join keys:** `state_code`, `state_name`.
+### Step 5 — Dashboard (Databricks App)
 
-**Validation:** weighted disease prevalence is compared against published BRFSS benchmarks (arthritis 26.4%, depression 20.9%, diabetes 12.5%, etc.) to confirm the recode preserves epidemiological correctness.
+The Streamlit app reads from `gold.*` via the bound DBSQL warehouse and renders the five interactive views described above.
 
----
+## The Dashboard App
 
-### Step 3 — EDA & Model Preparation
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│ BRFSS 2024 Health Analytics                                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Overview  │  Geographic  │  Demographics  │  Behavioral  │  Care Gaps  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-> Notebook: **`1_Kelly_EDA`**
-
-Exploratory analysis and feature selection across nine sections:
-
-1. Data overview & dtypes
-2. Missing-value audit
-3. Survey weight (`_LLCPWT`) analysis
-4. Demographics overview
-5. Outcome (chronic disease) prevalence — weighted vs. unweighted
-6. Behavioral risk factors
-7. Healthcare access patterns
-8. Geographic (state-level) profiles
-9. Correlation & co-occurrence analysis
-
-The notebook concludes with a model-preparation section that drops survey-design metadata, drops columns with >50% missingness, drops EDA-identified redundancies, and imputes the remainder using mode/median strategies appropriate to each column type.
-
-**Output:** `silver.brfss_2024_clean_eda` — imputed, feature-selected, ready for K-Means clustering and downstream gold-layer analytics.
-
----
-
-### Step 4 — Modeling & Visualization (downstream)
-
-The silver layer feeds into:
-
-- K-Means clustering on behavioral risk features (gold table: `gold.brfss_risk_clusters`)
-- State-level benchmarking joins (BRFSS × SVI × Medicaid)
-- Preventive care gap analysis (high-risk behavior × low preventive utilization)
-- Three Tableau dashboards corresponding to the deliverables above
+The app runs on Databricks Apps (serverless), authenticated via OAuth on-behalf-of-user, and queries the gold layer through the bound SQL warehouse. Every chart is a Plotly figure styled with the Databricks color palette; per-state aggregations use the `dim_location` FIPS lookup, and SVI and Medicaid context join in on `state_code` / `state_name`.
 
 ## Quickstart
 
 ### Prerequisites
 
-- Databricks workspace access (`https://dbc-670721c9-ce87.cloud.databricks.com`)
-- Databricks CLI installed and authenticated via the `school` profile in `~/.databrickscfg`
-- A running SQL warehouse or all-purpose cluster
-- Python 3.11+ for local notebook exploration
+- Databricks workspace access at `https://dbc-670721c9-ce87.cloud.databricks.com`
+- Databricks CLI `>= 0.205` installed and authenticated via the `school` profile in `~/.databrickscfg`
+- A running SQL warehouse (Serverless Starter is fine)
+- Python 3.11+ for local exploration
 
-### Run the Pipeline
+### Run the data pipeline
 
 In the Databricks workspace, open and run each notebook end-to-end, in order:
 
 ```text
-1.  /Data_Engineering_Notebooks/bronze_cleanup
-2.  /Data_Engineering_Notebooks/2_Ploy_File_Cleanup_Silver
-3.  /Data_Engineering_Notebooks/1_Kelly_EDA
+1.  /Data_Engineering_Notebooks/0_Kevin_Create_Bronze
+2.  /Data_Engineering_Notebooks/bronze_cleanup
+3.  /Data_Engineering_Notebooks/1_Ploy_Bronze_to_Silver
+4.  /Data_Engineering_Notebooks/1_Kelly_EDA          (optional — produces the model-prep table)
+5.  /Data_Engineering_Notebooks/silver_to_gold
 ```
 
-Each step is idempotent — re-running overwrites its target table(s) with `overwriteSchema=true`.
+Each step is idempotent — re-runs overwrite their target table(s) with `overwriteSchema=true`.
 
-### Local Development
+### Deploy the app
 
-For offline inspection of the Colab originals (notebooks 1 and 2 in this repo):
+From the repo root, using the bundle:
+
+```bash
+# Validate the bundle definition
+databricks bundle validate --profile school
+
+# Deploy to the dev target (uploads app source, registers the App resource)
+databricks bundle deploy --target dev --profile school
+
+# Open the app in the browser
+databricks bundle open brfss_analytics_app --target dev --profile school
+```
+
+After the first deploy, subsequent code changes only require `databricks bundle deploy` again. The bound warehouse is reused.
+
+### Local development
+
+For offline exploration of the notebooks:
 
 ```bash
 pip install -r requirements.txt
 jupyter lab
 ```
 
-The local notebooks are **historical exports** of the Colab versions and read from Google Drive paths. The canonical, runnable pipeline lives in the Databricks workspace.
+For local Streamlit dev against a remote warehouse:
+
+```bash
+cd app
+pip install -r requirements.txt
+export DATABRICKS_HOST=https://dbc-670721c9-ce87.cloud.databricks.com
+export DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>
+export DATABRICKS_TOKEN=<your-pat>
+streamlit run app.py
+```
 
 ## Tech Stack
 
 | Layer | Tooling |
 |---|---|
 | **Storage** | Delta Lake on Databricks Unity Catalog |
-| **Compute** | Databricks (Apache Spark / PySpark 3.5) |
+| **Compute** | Databricks (Apache Spark / PySpark 3.5; Serverless SQL Warehouse for the app) |
 | **Languages** | Python 3.11+, SQL (Databricks SQL / ANSI) |
 | **Analysis** | pandas, NumPy, DuckDB |
-| **Visualization** | Tableau (production dashboards); matplotlib, seaborn, missingno (EDA) |
-| **I/O Adapters** | pyreadstat (SAS XPT), SQLAlchemy |
-| **Workflow** | Databricks Workspace notebooks |
+| **Visualization** | Plotly + Streamlit (Databricks App); matplotlib, seaborn, missingno (EDA) |
+| **I/O Adapters** | `databricks-sql-connector`, `databricks-sdk`, pyreadstat (SAS XPT) |
+| **Orchestration** | Databricks Asset Bundles (`databricks.yml`) |
 | **Source Control** | Git / GitHub |
 
 ## Deliverables & Roadmap
 
-- [x] Raw → Bronze ingestion (one-time)
+- [x] Raw → Bronze ingestion (`0_Kevin_Create_Bronze`)
 - [x] Bronze type cleanup (`bronze_cleanup`)
-- [x] Bronze → Silver transformations (`2_Ploy_File_Cleanup_Silver`)
+- [x] Bronze → Silver transformations (`1_Ploy_Bronze_to_Silver`)
 - [x] EDA + model preparation (`1_Kelly_EDA`)
+- [x] Silver → Gold star schema (`silver_to_gold`)
+- [x] Streamlit dashboard on Databricks Apps + DAB
 - [ ] Behavioral risk clustering analysis (K-Means on silver features)
 - [ ] State-level benchmarking Tableau dashboard
 - [ ] Preventive care gap report (Tableau)
