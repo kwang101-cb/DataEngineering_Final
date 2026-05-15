@@ -8,6 +8,7 @@ and renders weighted prevalence, geographic, demographic, behavioral, and care-g
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from typing import Any
 
 import pandas as pd
@@ -103,13 +104,25 @@ def _connection():
 
 @st.cache_data(ttl=3600, show_spinner="Querying warehouse…")
 def q(sql_text: str, **params: Any) -> pd.DataFrame:
-    """Run a SQL query and return a pandas DataFrame. Cached for 1 hour."""
+    """Run a SQL query and return a pandas DataFrame. Cached for 1 hour.
+
+    databricks-sql-connector returns DECIMAL columns as Python ``Decimal`` objects
+    inside an object-dtype Series, which Plotly rejects for numeric props like
+    ``size=`` and ``color=``. Auto-convert those columns to float here so the rest
+    of the app can treat every numeric column as a real number.
+    """
     formatted = sql_text.format(GOLD=GOLD, **params)
     with _connection().cursor() as cur:
         cur.execute(formatted)
         rows = cur.fetchall()
         cols = [c[0] for c in cur.description]
-    return pd.DataFrame(rows, columns=cols)
+    df = pd.DataFrame(rows, columns=cols)
+    for c in df.columns:
+        if df[c].dtype == object:
+            non_null = df[c].dropna()
+            if len(non_null) and isinstance(non_null.iloc[0], Decimal):
+                df[c] = df[c].astype(float)
+    return df
 
 
 # ─── Sidebar navigation ──────────────────────────────────────────────────────
@@ -321,7 +334,12 @@ elif page == "Geographic":
         LEFT JOIN {GOLD}.dim_medicaid m ON s.state_name = m.state_name
         """
     )
-    merged = state_df.merge(svi_df, left_on="state", right_on="state_code", how="inner")
+    # svi_df also has state_name — drop it before merge so we keep the BRFSS-side label
+    # and avoid the _x / _y suffix collision.
+    merged = state_df.merge(
+        svi_df.drop(columns=["state_name"]),
+        left_on="state", right_on="state_code", how="inner",
+    )
     merged["svi_overall"] = pd.to_numeric(merged["svi_overall"], errors="coerce")
     fig = px.scatter(
         merged, x="svi_overall", y="pct", size="pct", color="medicaid_expansion_status",
@@ -433,11 +451,11 @@ elif page == "Behavioral Risk":
     pct_df = q(
         """
         SELECT
-            SUM(CASE WHEN b.exercise          THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS Exercise,
-            SUM(CASE WHEN b.ever_smoker       THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "Ever smoker",
-            SUM(CASE WHEN b.any_alcohol       THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "Any alcohol",
-            SUM(CASE WHEN b.binge_drinking    THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "Binge drinking",
-            SUM(CASE WHEN b.heavy_drinker     THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "Heavy drinking"
+            SUM(CASE WHEN b.exercise          THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Exercise`,
+            SUM(CASE WHEN b.ever_smoker       THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Ever smoker`,
+            SUM(CASE WHEN b.any_alcohol       THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Any alcohol`,
+            SUM(CASE WHEN b.binge_drinking    THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Binge drinking`,
+            SUM(CASE WHEN b.heavy_drinker     THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Heavy drinking`
         FROM {GOLD}.fact_health_response f
         JOIN {GOLD}.dim_behavior b ON f.behavior_key = b.behavior_key
         """
@@ -522,12 +540,12 @@ elif page == "Care Gaps":
     gap = q(
         """
         SELECT ha.has_insurance AS insurance,
-               SUM(CASE WHEN pc.flu_shot          THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "Flu shot",
-               SUM(CASE WHEN pc.pneumo_vaccine   THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "Pneumo vaccine",
-               SUM(CASE WHEN pc.colorectal_screen THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "Colorectal screen",
-               SUM(CASE WHEN pc.cervical_screen   THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "Cervical screen",
-               SUM(CASE WHEN pc.mammogram_2yr     THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "Mammogram (2yr)",
-               SUM(CASE WHEN pc.hiv_test          THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS "HIV test"
+               SUM(CASE WHEN pc.flu_shot          THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Flu shot`,
+               SUM(CASE WHEN pc.pneumo_vaccine   THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Pneumo vaccine`,
+               SUM(CASE WHEN pc.colorectal_screen THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Colorectal screen`,
+               SUM(CASE WHEN pc.cervical_screen   THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Cervical screen`,
+               SUM(CASE WHEN pc.mammogram_2yr     THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `Mammogram (2yr)`,
+               SUM(CASE WHEN pc.hiv_test          THEN f.survey_weight END) / SUM(f.survey_weight) * 100 AS `HIV test`
         FROM {GOLD}.fact_health_response f
         JOIN {GOLD}.dim_healthcare_access ha ON f.access_key = ha.access_key
         JOIN {GOLD}.dim_preventive_care pc   ON f.preventive_key = pc.preventive_key
