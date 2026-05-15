@@ -2,6 +2,8 @@
 
 # BRFSS 2024 — Behavioral Risk & Chronic Disease Analytics
 
+<img src="streamlit_app.png" alt="BRFSS 2024 Health Analytics — Streamlit dashboard on Databricks Apps" width="900" />
+
 **A medallion-architecture data pipeline that transforms the CDC's Behavioral Risk Factor Surveillance System into analysis-ready datasets, plus a Databricks App that surfaces them as interactive dashboards.**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
