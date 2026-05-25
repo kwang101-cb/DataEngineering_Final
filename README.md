@@ -4,6 +4,9 @@
 
 <img src="streamlit_app.png" alt="BRFSS 2024 Health Analytics — Streamlit dashboard on Databricks Apps" width="900" />
 
+[Live Website](https://brfss-analytics-7474658763286946.aws.databricksapps.com)
+
+
 **A medallion-architecture data pipeline that transforms the CDC's Behavioral Risk Factor Surveillance System into analysis-ready datasets, plus a Databricks App that surfaces them as interactive dashboards.**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
@@ -282,18 +285,6 @@ streamlit run app.py
 | **Orchestration** | Databricks Asset Bundles (`databricks.yml`) |
 | **Source Control** | Git / GitHub |
 
-## Deliverables & Roadmap
-
-- [x] Raw → Bronze ingestion (`0_Kevin_Create_Bronze`)
-- [x] Bronze type cleanup (`bronze_cleanup`)
-- [x] Bronze → Silver transformations (`1_Ploy_Bronze_to_Silver`)
-- [x] EDA + model preparation (`1_Kelly_EDA`)
-- [x] Silver → Gold star schema (`silver_to_gold`)
-- [x] Streamlit dashboard on Databricks Apps + DAB
-- [ ] Behavioral risk clustering analysis (K-Means on silver features)
-- [ ] State-level benchmarking Tableau dashboard
-- [ ] Preventive care gap report (Tableau)
-- [ ] Final executive write-up
 
 ---
 
